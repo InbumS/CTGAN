@@ -10,6 +10,8 @@ from ctgan.demo import load_demo
 from ctgan.synthesizers.ctgan import CTGAN
 from ctgan.synthesizers.tvae import TVAE
 
+#CTGAN ,TVAE, load_demo 모듈 초기화
+
 __all__ = (
     'CTGAN',
     'TVAE',

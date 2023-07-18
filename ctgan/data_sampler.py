@@ -1,4 +1,4 @@
-"""DataSampler module."""
+# Conditional vector를 만드는 부분
 
 import numpy as np
 
@@ -8,6 +8,7 @@ class DataSampler(object):
 
     def __init__(self, data, output_info, log_frequency):
         self._data = data
+
 
         def is_discrete_column(column_info):
             return (len(column_info) == 1

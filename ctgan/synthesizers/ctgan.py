@@ -1,27 +1,26 @@
-"""CTGAN module."""
-
 import warnings
 
 import numpy as np
 import pandas as pd
 import torch
+# torch 모듈 구현
 from torch import optim
 from torch.nn import BatchNorm1d, Dropout, LeakyReLU, Linear, Module, ReLU, Sequential, functional
 
 from ctgan.data_sampler import DataSampler
 from ctgan.data_transformer import DataTransformer
 from ctgan.synthesizers.base import BaseSynthesizer, random_state
-
+ 
 
 class Discriminator(Module):
-    """Discriminator for the CTGAN."""
-
+    # pac은 10개의 열을 학습한다는 의미 (최소)
     def __init__(self, input_dim, discriminator_dim, pac=10):
         super(Discriminator, self).__init__()
         dim = input_dim * pac
         self.pac = pac
         self.pacdim = dim
-        seq = []
+        seq = []    
+        #training
         for item in list(discriminator_dim):
             seq += [Linear(dim, item), LeakyReLU(0.2), Dropout(0.5)]
             dim = item
@@ -30,7 +29,7 @@ class Discriminator(Module):
         self.seq = Sequential(*seq)
 
     def calc_gradient_penalty(self, real_data, fake_data, device='cpu', pac=10, lambda_=10):
-        """Compute the gradient penalty."""
+        """10개를 한꺼번에 gradient update 하는 부분"""
         alpha = torch.rand(real_data.size(0) // pac, 1, 1, device=device)
         alpha = alpha.repeat(1, pac, real_data.size(1))
         alpha = alpha.view(-1, real_data.size(1))
@@ -49,6 +48,7 @@ class Discriminator(Module):
         gradient_penalty = ((gradients_view) ** 2).mean() * lambda_
 
         return gradient_penalty
+
 
     def forward(self, input_):
         """Apply the Discriminator to the `input_`."""
@@ -80,6 +80,7 @@ class Generator(Module):
         super(Generator, self).__init__()
         dim = embedding_dim
         seq = []
+        # 학습할때 Residual connection
         for item in list(generator_dim):
             seq += [Residual(dim, item)]
             dim += item
@@ -138,12 +139,14 @@ class CTGAN(BaseSynthesizer):
             If this is False or CUDA is not available, CPU will be used.
             Defaults to ``True``.
     """
-
+    
+    # 초기 Hyperparameter
     def __init__(self, embedding_dim=128, generator_dim=(256, 256), discriminator_dim=(256, 256),
                  generator_lr=2e-4, generator_decay=1e-6, discriminator_lr=2e-4,
                  discriminator_decay=1e-6, batch_size=500, discriminator_steps=1,
                  log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True):
-
+        
+        # batchsize는 2의 배수로 설정
         assert batch_size % 2 == 0
 
         self._embedding_dim = embedding_dim
@@ -162,6 +165,7 @@ class CTGAN(BaseSynthesizer):
         self._epochs = epochs
         self.pac = pac
 
+        # GPU가 없으면 CPU, 있으면 GPU
         if not cuda or not torch.cuda.is_available():
             device = 'cpu'
         elif isinstance(cuda, str):
@@ -177,10 +181,7 @@ class CTGAN(BaseSynthesizer):
 
     @staticmethod
     def _gumbel_softmax(logits, tau=1, hard=False, eps=1e-10, dim=-1):
-        """Deals with the instability of the gumbel_softmax for older versions of torch.
-
-        For more details about the issue:
-        https://drive.google.com/file/d/1AA5wPfZ1kquaRtVruCd6BiYZGcDeNxyP/view?usp=sharing
+        """Deals with the instability of the gumbel_softmax for older versions of torch
 
         Args:
             logits […, num_features]:
@@ -251,7 +252,7 @@ class CTGAN(BaseSynthesizer):
 
     def _validate_discrete_columns(self, train_data, discrete_columns):
         """Check whether ``discrete_columns`` exists in ``train_data``.
-
+        이산적 속성이 있는지 잘 존재하는지 판단하는 함수
         Args:
             train_data (numpy.ndarray or pandas.DataFrame):
                 Training Data. It must be a 2-dimensional numpy array or a pandas.DataFrame.
@@ -276,12 +277,11 @@ class CTGAN(BaseSynthesizer):
 
     @random_state
     def fit(self, train_data, discrete_columns=(), epochs=None):
-        """Fit the CTGAN Synthesizer models to the training data.
-
+        """Fit the CTGAN Synthesizer models to the training data(훈련 데이터로 모델 학습)
         Args:
             train_data (numpy.ndarray or pandas.DataFrame):
                 Training Data. It must be a 2-dimensional numpy array or a pandas.DataFrame.
-            discrete_columns (list-like):
+            discrete_columns (list-like): (컨디셔널 벡터를 생성해 리스트에 집어넣는다)
                 List of discrete columns to be used to generate the Conditional
                 Vector. If ``train_data`` is a Numpy array, this list should
                 contain the integer indices of the columns. Otherwise, if it is
@@ -298,7 +298,9 @@ class CTGAN(BaseSynthesizer):
                 DeprecationWarning
             )
 
+        # 데이터 변환 클래스 선언
         self._transformer = DataTransformer()
+        # 두개의 인자를 변환기에 적합
         self._transformer.fit(train_data, discrete_columns)
 
         train_data = self._transformer.transform(train_data)
@@ -331,7 +333,7 @@ class CTGAN(BaseSynthesizer):
             discriminator.parameters(), lr=self._discriminator_lr,
             betas=(0.5, 0.9), weight_decay=self._discriminator_decay
         )
-
+        # 평균과 분산을 구한다(배치 사이즈와 embedding size만큼)
         mean = torch.zeros(self._batch_size, self._embedding_dim, device=self._device)
         std = mean + 1
 
@@ -340,6 +342,7 @@ class CTGAN(BaseSynthesizer):
             for id_ in range(steps_per_epoch):
 
                 for n in range(self._discriminator_steps):
+                    # 128차원의 가짜 벡터 생성
                     fakez = torch.normal(mean=mean, std=std)
 
                     condvec = self._data_sampler.sample_condvec(self._batch_size)
@@ -348,10 +351,11 @@ class CTGAN(BaseSynthesizer):
                         real = self._data_sampler.sample_data(self._batch_size, col, opt)
                     else:
                         c1, m1, col, opt = condvec
+                        # numpy 를 tensor로 변환
                         c1 = torch.from_numpy(c1).to(self._device)
                         m1 = torch.from_numpy(m1).to(self._device)
                         fakez = torch.cat([fakez, c1], dim=1)
-
+                        # 500만큼 설정
                         perm = np.arange(self._batch_size)
                         np.random.shuffle(perm)
                         real = self._data_sampler.sample_data(
@@ -360,7 +364,7 @@ class CTGAN(BaseSynthesizer):
 
                     fake = self._generator(fakez)
                     fakeact = self._apply_activate(fake)
-
+                    # 진짜 데이터 tensor로 변환
                     real = torch.from_numpy(real.astype('float32')).to(self._device)
 
                     if c1 is not None:
@@ -394,6 +398,7 @@ class CTGAN(BaseSynthesizer):
                     fakez = torch.cat([fakez, c1], dim=1)
 
                 fake = self._generator(fakez)
+                # activate function
                 fakeact = self._apply_activate(fake)
 
                 if c1 is not None:
@@ -401,11 +406,12 @@ class CTGAN(BaseSynthesizer):
                 else:
                     y_fake = discriminator(fakeact)
 
+                # condition vector가 0이면 0 아니면 condition loss를 구한다
                 if condvec is None:
                     cross_entropy = 0
                 else:
                     cross_entropy = self._cond_loss(fake, c1, m1)
-
+                # 생성자 loss 구하기
                 loss_g = -torch.mean(y_fake) + cross_entropy
 
                 optimizerG.zero_grad(set_to_none=False)
@@ -436,6 +442,7 @@ class CTGAN(BaseSynthesizer):
         Returns:
             numpy.ndarray or pandas.DataFrame
         """
+        # 데이터 프레임이 하나도 없으면 안된다
         if condition_column is not None and condition_value is not None:
             condition_info = self._transformer.convert_column_name_value_to_id(
                 condition_column, condition_value)
@@ -449,6 +456,7 @@ class CTGAN(BaseSynthesizer):
         for i in range(steps):
             mean = torch.zeros(self._batch_size, self._embedding_dim)
             std = mean + 1
+            # 가짜의 평균, 분산을 설정
             fakez = torch.normal(mean=mean, std=std).to(self._device)
 
             if global_condition_vec is not None:
@@ -459,6 +467,7 @@ class CTGAN(BaseSynthesizer):
             if condvec is None:
                 pass
             else:
+                # 학습 했던 conditional vector 참조
                 c1 = condvec
                 c1 = torch.from_numpy(c1).to(self._device)
                 fakez = torch.cat([fakez, c1], dim=1)
@@ -469,7 +478,7 @@ class CTGAN(BaseSynthesizer):
 
         data = np.concatenate(data, axis=0)
         data = data[:n]
-
+        # 다시 벡터에서 우리가 알던 형식으로 바꿔준다.
         return self._transformer.inverse_transform(data)
 
     def set_device(self, device):
